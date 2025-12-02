@@ -294,208 +294,365 @@ summary(rd_placebo)
 
 
 
-### 2. Nonparametric regression  ------------------------------------------------
+# ============================================================
+# Tutorial 6 – Part 1: Non-parametric Regression
+# Data 2: prestige, income, education, women, census, type
+# ============================================================
 
-library(haven)
-library(dplyr)
-library(KernSmooth)
-library(np)
+# Packages
+library(haven)   # read_dta
+library(np)      # nonparametrics
 
-## Load data --------------------------------------------------------------------
-data_2 <- read_dta(
-  "C:/Users/kuehn/Meine Ablage/Uni/aktuelle Kurse/Impact Evaluation & Causal Inference/Tutorials/6 - RDD - Nonparametrics/Tutorial6_data2.dta"
+# ------------------------------------------------------------
+# Load data
+# ------------------------------------------------------------
+data_2 <- read_dta("C:/Users/kuehn/Meine Ablage/Uni/aktuelle Kurse/Impact Evaluation & Causal Inference/Tutorials/6 - RDD - Nonparametrics/Tutorial6_data2.dta")
+
+# Quick check
+str(data_2)
+summary(data_2$prestige)
+summary(data_2$income)
+
+# ============================================================
+# Part 1A – Kernel density estimation for prestige
+# ============================================================
+
+prestige <- data_2$prestige
+
+# 1) Histogram + default kernel density estimate on same graph
+par(mfrow = c(1, 1))
+hist(
+  prestige,
+  breaks = 20,
+  prob = TRUE,
+  main = "Prestige: Histogram and default kernel density",
+  xlab = "Prestige"
+)
+lines(
+  density(prestige, na.rm = TRUE),
+  lwd = 2
 )
 
-data_2 <- data_2 %>%
-  mutate(type = factor(type))
-
-# Shorthands
-prestige  <- data_2$prestige
-income    <- data_2$income
-women     <- data_2$women
-education <- data_2$education
-type      <- data_2$type
-
-
-## (1) Kernel density of prestige ----------------------------------------------
-
-par(mfrow = c(1, 1))
-
-dens_prestige <- density(prestige, na.rm = TRUE, kernel = "gaussian")
+# 2) Kernel density with bandwidth = 1
+dens_bw1 <- density(prestige, bw = 1, na.rm = TRUE)
 
 plot(
-  dens_prestige,
-  main = "Kernel density of prestige",
+  dens_bw1,
+  main = "Prestige: Kernel density, bw = 1",
   xlab = "Prestige"
 )
 
+# 3) Kernel density with bandwidth = 20
+dens_bw20 <- density(prestige, bw = 20, na.rm = TRUE)
 
-## (2) Nonparametric regression prestige ~ income -------------------------------
+plot(
+  dens_bw20,
+  main = "Prestige: Kernel density, bw = 20",
+  xlab = "Prestige"
+)
 
-# Scatter + local polynomial + LOWESS
+# 4) Kernel density with Gaussian kernel (explicit)
+#    (base::density is Gaussian by default, this just makes it explicit)
+dens_gauss <- density(prestige, kernel = "gaussian", na.rm = TRUE)
+
+plot(
+  dens_gauss,
+  main = "Prestige: Kernel density, Gaussian kernel",
+  xlab = "Prestige"
+)
+
+# 5) Kernel density with rectangular (uniform) kernel using np::npudens
+#    np chooses bandwidth by cross-validation, we only change the kernel type.
+
+# Gaussian version in np (for comparison)
+dens_np_gauss <- npudens(
+  ~ prestige,
+  data     = data_2,
+  ckertype = "gaussian"
+)
+
+plot(
+  dens_np_gauss,
+  main = "Prestige: np kernel density, Gaussian kernel",
+  xlab = "Prestige"
+)
+
+# Uniform (rectangular) kernel in np
+dens_np_uniform <- npudens(
+  ~ prestige,
+  data     = data_2,
+  ckertype = "uniform"
+)
+
+plot(
+  dens_np_uniform,
+  main = "Prestige: np kernel density, uniform (rectangular) kernel",
+  xlab = "Prestige"
+)
+
+# ============================================================
+# Part 1B – Kernel regressions: prestige on income
+# ============================================================
+
+income   <- data_2$income
+prestige <- data_2$prestige
+
+# ------------------------------------------------------------
+# B1) Parametric vs nonparametric regression
+# ------------------------------------------------------------
+
+# Parametric (OLS) polynomial in income if you want, here linear:
+mod_lin <- lm(prestige ~ income, data = data_2)
+summary(mod_lin)
+
+# Nonparametric local linear regression (automatic bandwidth, cv.ls)
+bw_auto <- npregbw(prestige ~ income, data = data_2, regtype = "ll")
+bw_auto
+mod_np_auto <- npreg(bws = bw_auto, data = data_2)
+
+# Evaluation grid: 50 points
+grid_50 <- data.frame(
+  income = seq(
+    min(income, na.rm = TRUE),
+    max(income, na.rm = TRUE),
+    length.out = 50
+  )
+)
+
+pred_lin_50    <- predict(mod_lin,     newdata = grid_50)
+pred_np_auto_50 <- predict(mod_np_auto, newdata = grid_50)
+
+# Plot: scatter + OLS + nonparametric
+par(mfrow = c(1, 1))
 plot(
   income, prestige,
-  pch = 16, cex = 0.6,
+  pch  = 16,
+  cex  = 0.6,
   xlab = "Income",
   ylab = "Prestige",
-  main = "Prestige vs Income"
+  main = "Prestige vs income: OLS vs nonparametric (50 grid points)"
+)
+lines(grid_50$income, pred_lin_50,      lwd = 2, lty = 2)
+lines(grid_50$income, pred_np_auto_50,  lwd = 2)
+
+# ------------------------------------------------------------
+# B2) Same comparison with a finer grid: 200 evaluation points
+# ------------------------------------------------------------
+
+grid_200 <- data.frame(
+  income = seq(
+    min(income, na.rm = TRUE),
+    max(income, na.rm = TRUE),
+    length.out = 200
+  )
 )
 
-# Local polynomial (KernSmooth, degree 1)
-bw_lp <- sd(income, na.rm = TRUE) / 4
-lp_inc <- locpoly(income, prestige, degree = 1, bandwidth = bw_lp)
-lines(lp_inc, lwd = 2)
+pred_lin_200    <- predict(mod_lin,     newdata = grid_200)
+pred_np_auto_200 <- predict(mod_np_auto, newdata = grid_200)
 
-# LOWESS
-lw_inc <- lowess(income, prestige, f = 0.5)
-lines(lw_inc, lwd = 2, lty = 2)
+plot(
+  income, prestige,
+  pch  = 16,
+  cex  = 0.6,
+  xlab = "Income",
+  ylab = "Prestige",
+  main = "Prestige vs income: OLS vs nonparametric (200 grid points)"
+)
+lines(grid_200$income, pred_lin_200,      lwd = 2, lty = 2)
+lines(grid_200$income, pred_np_auto_200,  lwd = 2)
 
-legend(
-  "topleft",
-  legend = c("local poly", "LOWESS"),
-  lwd = 2,
-  lty = c(1, 2),
-  bty = "n"
+# ------------------------------------------------------------
+# B3) Nonparametric regression with fixed bandwidth = 2000,
+#     bootstrapped standard errors (100 replications)
+# ------------------------------------------------------------
+
+mod_np_bw2000 <- npreg(
+  prestige ~ income,
+  data        = data_2,
+  regtype     = "ll",
+  bws         = 2000,          # fixed bandwidth
+  boot.method = "wild",        # or "residual"
+  boot.num    = 100
 )
 
+summary(mod_np_bw2000)
 
-## (3) npreg: prestige ~ income (univariate) ------------------------------------
+# ------------------------------------------------------------
+# B4) Plot with bw = 2000
+# ------------------------------------------------------------
 
-bw_inc_np <- npregbw(
+grid_bw <- grid_200
+
+pred_np_bw2000 <- predict(mod_np_bw2000, newdata = grid_bw)
+
+plot(
+  income, prestige,
+  pch  = 16,
+  cex  = 0.6,
+  xlab = "Income",
+  ylab = "Prestige",
+  main = "Nonparametric regression: bw = 2000"
+)
+lines(grid_bw$income, pred_np_bw2000, lwd = 2)
+
+# ------------------------------------------------------------
+# B5) Nonparametric regression with bw = 5000
+# ------------------------------------------------------------
+
+mod_np_bw5000 <- npreg(
+  prestige ~ income,
+  data        = data_2,
+  regtype     = "ll",
+  bws         = 5000,
+  boot.method = "wild",
+  boot.num    = 100
+)
+
+summary(mod_np_bw5000)
+
+pred_np_bw5000 <- predict(mod_np_bw5000, newdata = grid_bw)
+
+plot(
+  income, prestige,
+  pch  = 16,
+  cex  = 0.6,
+  xlab = "Income",
+  ylab = "Prestige",
+  main = "Nonparametric regression: bw = 5000"
+)
+lines(grid_bw$income, pred_np_bw5000, lwd = 2)
+
+# ------------------------------------------------------------
+# B6) Automatic bandwidth (cv.ls) – already computed as bw_auto
+#     This is the standard cross-validated least-squares bw.
+# ------------------------------------------------------------
+
+bw_auto
+summary(mod_np_auto)
+
+pred_np_auto_bw <- predict(mod_np_auto, newdata = grid_bw)
+
+plot(
+  income, prestige,
+  pch  = 16,
+  cex  = 0.6,
+  xlab = "Income",
+  ylab = "Prestige",
+  main = "Nonparametric regression: automatic bw (cv.ls)"
+)
+lines(grid_bw$income, pred_np_auto_bw, lwd = 2)
+
+# ------------------------------------------------------------
+# B7) AIC-based bandwidth (analogue to Stata’s imaic)
+# ------------------------------------------------------------
+
+bw_aic <- npregbw(
   prestige ~ income,
   data     = data_2,
-  regtype  = "lc",
-  bwmethod = "cv.ls"
+  regtype  = "ll",
+  bwmethod = "cv.aic"
 )
-bw_inc_np
 
-np_inc <- npreg(bws = bw_inc_np)
-summary(np_inc)
+bw_aic
+mod_np_aic <- npreg(bws = bw_aic, data = data_2)
 
-# Plot fitted CEF
-inc_grid <- seq(
-  from = min(income, na.rm = TRUE),
-  to   = max(income, na.rm = TRUE),
-  length.out = 200
-)
-pred_inc <- predict(np_inc, newdata = data.frame(income = inc_grid))
+pred_np_aic <- predict(mod_np_aic, newdata = grid_bw)
 
 plot(
   income, prestige,
-  pch = 16, cex = 0.5, col = "grey70",
+  pch  = 16,
+  cex  = 0.6,
   xlab = "Income",
   ylab = "Prestige",
-  main = "npreg: E[Prestige | Income]"
+  main = "Nonparametric regression: AIC-based bw (cv.aic)"
 )
-lines(inc_grid, pred_inc, lwd = 2)
+lines(grid_bw$income, pred_np_aic, lwd = 2)
 
+# ------------------------------------------------------------
+# B8) Four-panel comparison of different bandwidth choices
+# ------------------------------------------------------------
 
-## (4) Multivariate npreg: prestige ~ income + women + education ---------------
+par(mfrow = c(2, 2))
+
+# bw = 2000
+plot(
+  income, prestige,
+  pch  = 16, cex = 0.5,
+  xlab = "Income", ylab = "Prestige",
+  main = "bw = 2000"
+)
+lines(grid_bw$income, pred_np_bw2000, lwd = 2)
+
+# bw = 5000
+plot(
+  income, prestige,
+  pch  = 16, cex = 0.5,
+  xlab = "Income", ylab = "Prestige",
+  main = "bw = 5000"
+)
+lines(grid_bw$income, pred_np_bw5000, lwd = 2)
+
+# automatic (cv.ls)
+plot(
+  income, prestige,
+  pch  = 16, cex = 0.5,
+  xlab = "Income", ylab = "Prestige",
+  main = "automatic bw (cv.ls)"
+)
+lines(grid_bw$income, pred_np_auto_bw, lwd = 2)
+
+# AIC-based (cv.aic)
+plot(
+  income, prestige,
+  pch  = 16, cex = 0.5,
+  xlab = "Income", ylab = "Prestige",
+  main = "AIC-based bw (cv.aic)"
+)
+lines(grid_bw$income, pred_np_aic, lwd = 2)
+
+par(mfrow = c(1, 1))  # reset
+
+# ------------------------------------------------------------
+# B9) Multivariate nonparametric regression:
+#     prestige on income, education, and women
+# ------------------------------------------------------------
+
+# Treat women as a factor (discrete regressor)
+data_2$women_factor <- factor(data_2$women)
 
 bw_multi <- npregbw(
-  prestige ~ income + women + education,
+  prestige ~ income + education + women_factor,
   data     = data_2,
-  regtype  = "lc",
-  bwmethod = "cv.ls"
+  regtype  = "ll",
+  bwmethod = "cv.aic"
 )
+
 bw_multi
+mod_np_multi <- npreg(bws = bw_multi, data = data_2)
+summary(mod_np_multi)
 
-np_multi <- npreg(bws = bw_multi)
-summary(np_multi)
+# Example: partial effect of income at median education and women = 0
+med_edu   <- median(data_2$education, na.rm = TRUE)
+base_w    <- levels(data_2$women_factor)[1]
 
-# Marginal effect of women: vary women, fix income and education at means
-inc_bar <- mean(income, na.rm = TRUE)
-edu_bar <- mean(education, na.rm = TRUE)
-
-grid_women <- seq(
-  from = min(women, na.rm = TRUE),
-  to   = max(women, na.rm = TRUE),
-  length.out = 50
+grid_income_multi <- data.frame(
+  income        = seq(
+    min(income, na.rm = TRUE),
+    max(income, na.rm = TRUE),
+    length.out = 200
+  ),
+  education     = med_edu,
+  women_factor  = base_w
 )
 
-new_multi <- data.frame(
-  income    = rep(inc_bar, length(grid_women)),
-  women     = grid_women,
-  education = rep(edu_bar, length(grid_women))
-)
-
-pred_w <- predict(np_multi, newdata = new_multi)
+pred_multi <- predict(mod_np_multi, newdata = grid_income_multi)
 
 plot(
-  grid_women, pred_w,
+  grid_income_multi$income,
+  pred_multi,
   type = "l",
-  xlab = "Women share in occupation",
-  ylab = "E[Prestige | income, women, education]",
-  main = "Effect of women share (income, education at means)"
-)
-
-
-## (5) npreg with discrete covariate: prestige ~ income + type ------------------
-
-bw_type <- npregbw(
-  prestige ~ income + type,
-  data     = data_2,
-  regtype  = "lc",
-  bwmethod = "cv.ls"
-)
-bw_type
-
-np_type <- npreg(bws = bw_type)
-summary(np_type)
-
-# Predicted prestige at median income by occupation type
-type_levels <- levels(type)
-inc_med     <- median(income, na.rm = TRUE)
-
-pred_type <- sapply(type_levels, function(tk) {
-  newdata <- data.frame(
-    income = inc_med,
-    type   = factor(tk, levels = type_levels)
-  )
-  predict(np_type, newdata = newdata)
-})
-
-pred_type_df <- data.frame(
-  type         = type_levels,
-  prestige_hat = pred_type
-)
-print(pred_type_df)
-
-
-## (6) CEF of prestige vs income, separate curves by type ----------------------
-
-income_grid <- seq(
-  from = min(income, na.rm = TRUE),
-  to   = max(income, na.rm = TRUE),
-  length.out = 100
-)
-
-# Initialize empty plot
-plot(
-  NA,
-  xlim = range(income_grid),
-  ylim = range(prestige, na.rm = TRUE),
   xlab = "Income",
-  ylab = "E[Prestige | Income, Type]",
-  main = "npreg CEF: prestige ~ income + type"
+  ylab = "Predicted prestige",
+  main = "Nonparametric regression: prestige ~ income + education + women\n(education at median, women = base category)"
 )
 
-cols <- seq_along(type_levels)
-
-for (j in seq_along(type_levels)) {
-  newdat_j <- data.frame(
-    income = income_grid,
-    type   = factor(type_levels[j], levels = type_levels)
-  )
-  yhat_j <- predict(np_type, newdata = newdat_j)
-  lines(income_grid, yhat_j, lwd = 2, col = cols[j])
-}
-
-legend(
-  "topleft",
-  legend = type_levels,
-  col    = cols,
-  lwd    = 2,
-  bty    = "n",
-  title  = "Occupation type"
-)
